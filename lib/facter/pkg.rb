@@ -3,18 +3,45 @@
 # Collects and creates a fact for every package installed on the system and
 # returns that package's version as the fact value.  Useful for doing package
 # inventory and making decisions based on installed package versions.
-
-require 'facter/util/pkg'
-
-counter_hash = {}
-Facter::Util::Pkg.package_list.each do |key, value|
-  if counter_hash[:"#{key}"].nil?
-    counter_hash[:"#{key}"] = value
-  else
-    counter_hash[:"#{key}"] << ", #{value}"
+module Facter::Util::Pkg
+  def self.validname(name)
+    name=name.tr('-+.','_') # RPM and deb packages might contain these
+    name=name.sub(/:.*/,'') # Debian multiarch arch qualifiers
   end
-end
 
-counter_hash.each do |key, value|
-  Facter.add(:"pkg_#{key}") { setcode { value } }
+  def self.package_list
+    packages = []
+    case Facter.value(:operatingsystem)
+    when 'Debian', 'Ubuntu'
+      command = 'dpkg-query -W'
+      packages = []
+      Facter::Util::Resolution.exec(command).each_line do |pkg|
+        name,version = pkg.chomp.split("\t")
+        packages << [Facter::Util::Pkg::validname(name),version]
+      end
+    when 'CentOS', 'RedHat', 'Fedora', 'SLES', 'Scientific'
+      command = 'rpm -qa --qf %{NAME}"\t"%{VERSION}-%{RELEASE}"\n"'
+      packages = []
+      Facter::Util::Resolution.exec(command).each_line do |pkg|
+        name,version = pkg.chomp.split("\t")
+        packages << [Facter::Util::Pkg::validname(name),version]
+      end
+    when 'Solaris'
+      command = 'pkginfo -x'
+      combined = ''
+      packages = []
+      Facter::Util::Resolution.exec(command).each_line do |line|
+        if line =~ /^\w/
+          then
+            combined << line.chomp
+          else
+            combined << line
+        end
+      end
+      combined.each_line do |pkg|
+        packages << pkg.chomp.scan(/^(\S+).*\s(\d.*)/)[0]
+      end
+    end
+    return packages
+  end
 end
